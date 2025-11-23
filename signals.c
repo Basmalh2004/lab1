@@ -34,14 +34,19 @@ void handleSIGTSTP(int sig) {
             printf("basmalamhmdshell: process %d was stopped\n", fgProcessPid);
 
             // Add stopped job to jobs list
-            // Find next available job ID
-            int maxJobId = 0;
-            for (int i = 0; i < JOBS_NUM_MAX; i++) {
-                if (jobs_list[i].jobId > maxJobId) {
-                    maxJobId = jobs_list[i].jobId;
+            // Find minimum available job ID (per spec page 4)
+            int newJobId = 1;
+            int found = 1;
+            while (found) {
+                found = 0;
+                for (int i = 0; i < JOBS_NUM_MAX; i++) {
+                    if (jobs_list[i].jobId == newJobId) {
+                        found = 1;
+                        newJobId++;
+                        break;
+                    }
                 }
             }
-            int newJobId = maxJobId + 1;
 
             // Add to first empty slot
             for (int i = 0; i < JOBS_NUM_MAX; i++) {

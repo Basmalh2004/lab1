@@ -110,8 +110,8 @@ echo "Format: [<job id>] <command>: <process id> <seconds elapsed> secs"
 run_test "jobs empty list" "jobs\nquit kill" "basmalamhmdshell"
 run_test "jobs shows background job" "sleep 10 &\njobs\nquit kill" "\[1\].*sleep 10 &.*[0-9]+ secs"
 run_test "jobs multiple background" "sleep 20 &\nsleep 30 &\njobs\nquit kill" "\[2\].*sleep 30"
-# NOTE: jobs command doesn't validate extra args - this is a bug in implementation
-run_test "jobs ignores extra args (bug)" "jobs extra\nquit kill" "basmalamhmdshell"
+# Fixed: jobs command now validates extra args
+run_test "jobs error: extra args" "jobs extra\nquit kill" "expected 0 arguments"
 
 echo ""
 echo -e "${BLUE}=== 5. KILL TESTS ===${NC}"
@@ -149,9 +149,9 @@ echo "Per assignment page 12-13: quit [kill]"
 
 run_test "quit exits cleanly" "quit\necho should not see this" ""
 run_test "quit kill exits" "quit kill\necho should not see this" ""
-# NOTE: quit error messages differ from spec - implementation uses "invalid arguments"
-run_test "quit error: unexpected args" "quit something\nquit kill" "invalid arguments"
-run_test "quit error: too many args" "quit kill extra\nquit kill" "invalid arguments"
+# Fixed: quit error messages now match spec
+run_test "quit error: unexpected args" "quit something\nquit kill" "unexpected arguments"
+run_test "quit error: too many args" "quit kill extra\nquit kill" "expected 0 or 1 arguments"
 
 echo ""
 echo -e "${BLUE}=== 9. DIFF TESTS ===${NC}"

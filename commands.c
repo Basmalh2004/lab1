@@ -344,14 +344,19 @@ int executeExternal(Command* cmd) {
         buildCommandString(cmd, cmdStr, CMD_LENGTH_MAX);
         strcat(cmdStr, " &");  // Add & to show it's background
 
-        // Find highest existing job ID
-        int maxJobId = 0;
-        for (int i = 0; i < JOBS_NUM_MAX; i++) {
-            if (jobs_list[i].jobId > maxJobId) {
-                maxJobId = jobs_list[i].jobId;
+        // Find minimum available job ID (per spec page 4)
+        int newJobId = 1;
+        int found = 1;
+        while (found) {
+            found = 0;
+            for (int i = 0; i < JOBS_NUM_MAX; i++) {
+                if (jobs_list[i].jobId == newJobId) {
+                    found = 1;
+                    newJobId++;
+                    break;
+                }
             }
         }
-        int newJobId = maxJobId + 1;
 
         // Add to jobs list with BACKGROUND status
         for (int i = 0; i < JOBS_NUM_MAX; i++) {
@@ -469,6 +474,10 @@ int command_handler(Command* cmd){
 
 	// jobs command
 	else if (strcmp(cmd->cmd, "jobs") == 0){
+		if (cmd->nargs != 1){
+			perrorSmash("jobs", "expected 0 arguments");
+			return SMASH_FAIL;
+		}
 		jobes_list_print();
 		return SMASH_SUCCESS;
 	}
@@ -561,8 +570,12 @@ int command_handler(Command* cmd){
 		else if (cmd->nargs == 2 && strcmp(cmd->args[1], "kill") == 0){
 			return quit_command(1); //kill all jobs
 		}
+		else if (cmd->nargs > 2){
+			perrorSmash("quit", "expected 0 or 1 arguments");
+			return SMASH_FAIL;
+		}
 		else{
-			perrorSmash("quit", "invalid arguments");
+			perrorSmash("quit", "unexpected arguments");
 			return SMASH_FAIL;
 		}
 	}
