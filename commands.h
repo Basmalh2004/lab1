@@ -106,6 +106,7 @@ void perrorSmash(const char* cmd, const char* msg);
 
 // Jobs management
 void jobes_list_print();
+void cleanup_finished_jobs();  // Remove finished jobs from list
 
 // Built-in commands
 int kill_signal(int signum, int jobId);

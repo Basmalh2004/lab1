@@ -113,6 +113,19 @@ run_test "rapid cd - alternation" "cd /tmp\ncd /var\ncd -\ncd -\ncd -\ncd -\ncd 
 echo -e "${BLUE}=== 4. JOB MANAGEMENT STRESS ===${NC}"
 # ============================================
 
+# Test finished job cleanup (per spec page 4)
+output=$(echo -e "sleep 1 &\njobs\nsleep 2\njobs\nquit kill" | timeout 10 ./smash 2>&1)
+first_jobs=$(echo "$output" | grep -c "sleep 1 &")
+# Should show job in first jobs, but not in second jobs (after it finished)
+if [ "$first_jobs" -eq 1 ]; then
+    echo -e "${GREEN}[PASS]${NC} finished job removed from list"
+    ((PASSED++))
+else
+    echo -e "${RED}[FAIL]${NC} finished job removed from list"
+    echo "  Output: $output"
+    ((FAILED++))
+fi
+
 # Create and kill multiple jobs rapidly
 run_test "create 3 background jobs" "sleep 100 &\nsleep 100 &\nsleep 100 &\njobs\nquit kill" "sleep 100"
 

@@ -101,7 +101,28 @@ int parseCmdExample(char* line , Command* cmd_t)
 }
 
 
+// Clean up finished background jobs from the list
+// Per spec page 4: must be called before running any command,
+// before printing jobs list, and before adding new jobs
+void cleanup_finished_jobs(){
+	for(int i=0; i<JOBS_NUM_MAX; i++){
+		if (jobs_list[i].jobId != 0 && jobs_list[i].status == BACKGROUND){
+			int status;
+			// Non-blocking check if process has terminated
+			int result = my_system_call(SYS_WAITPID, jobs_list[i].jobPid, &status, WNOHANG);
+			if (result > 0) {
+				// Process has terminated, remove from list
+				jobs_list[i].jobId = 0;
+				jobs_list[i].jobPid = 0;
+				jobs_list[i].jobCmd_str[0] = '\0';
+				jobs_list[i].status = FOREGROUND;
+			}
+		}
+	}
+}
+
 void jobes_list_print(){
+	cleanup_finished_jobs();  // Clean up before printing
 	time_t now ;
 	time_t diff;
 	for(int i=0; i<JOBS_NUM_MAX; i++){
@@ -339,6 +360,8 @@ int executeExternal(Command* cmd) {
     // Check if command should run in background
     if (cmd->isBackground) {
         // Background: add to jobs list and return immediately
+        cleanup_finished_jobs();  // Clean up before adding new job (per spec page 4)
+
         // Build command string for job list
         char cmdStr[CMD_LENGTH_MAX];
         buildCommandString(cmd, cmdStr, CMD_LENGTH_MAX);

@@ -44,6 +44,7 @@ int main(int argc, char* argv[])
 		//execute command
 		Command cmd;
 		if (parseCmdExample(_cmd, &cmd) == VALID_COMMAND){
+			cleanup_finished_jobs();  // Clean up finished jobs before running any command
 			command_handler(&cmd);
 		}
 
