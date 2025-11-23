@@ -413,6 +413,11 @@ int executeExternal(Command* cmd) {
         return SMASH_SUCCESS;
     }
 
+    // Per spec page 15: external command fails if return value is not 0
+    if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
+        return SMASH_FAIL;
+    }
+
     return SMASH_SUCCESS;
 }
 
@@ -603,6 +608,89 @@ int command_handler(Command* cmd){
 		}
 	}
 
+	// alias command: alias <name>="<command>"
+	else if (strcmp(cmd->cmd, "alias") == 0){
+		if (cmd->nargs == 1){
+			// Print all aliases
+			for (int i = 0; i < num_aliases; i++){
+				printf("%s='%s'\n", aliases[i].name, aliases[i].command);
+			}
+			return SMASH_SUCCESS;
+		}
+
+		// Rebuild the full definition string from all args (parser splits on spaces)
+		char full_def[CMD_LENGTH_MAX];
+		full_def[0] = '\0';
+		for (int i = 1; i < cmd->nargs; i++){
+			if (i > 1) strcat(full_def, " ");
+			strcat(full_def, cmd->args[i]);
+		}
+
+		// Parse alias definition: name="command"
+		char* eq_pos = strchr(full_def, '=');
+		if (!eq_pos){
+			perrorSmash("alias", "invalid alias format");
+			return SMASH_FAIL;
+		}
+
+		// Extract name (before =)
+		char name[CMD_LENGTH_MAX];
+		int name_len = eq_pos - full_def;
+		strncpy(name, full_def, name_len);
+		name[name_len] = '\0';
+
+		// Extract command (after =, removing quotes)
+		char* cmd_start = eq_pos + 1;
+		if (*cmd_start == '"' || *cmd_start == '\''){
+			cmd_start++;
+		}
+		char alias_cmd[CMD_LENGTH_MAX];
+		strcpy(alias_cmd, cmd_start);
+		int cmd_len = strlen(alias_cmd);
+		if (cmd_len > 0 && (alias_cmd[cmd_len-1] == '"' || alias_cmd[cmd_len-1] == '\'')){
+			alias_cmd[cmd_len-1] = '\0';
+		}
+
+		// Check if alias already exists
+		int idx = find_alias(name);
+		if (idx >= 0){
+			// Update existing alias
+			strcpy(aliases[idx].command, alias_cmd);
+		} else {
+			// Add new alias
+			if (num_aliases >= MAX_ALIASES){
+				perrorSmash("alias", "too many aliases");
+				return SMASH_FAIL;
+			}
+			strcpy(aliases[num_aliases].name, name);
+			strcpy(aliases[num_aliases].command, alias_cmd);
+			num_aliases++;
+		}
+		return SMASH_SUCCESS;
+	}
+
+	// unalias command
+	else if (strcmp(cmd->cmd, "unalias") == 0){
+		if (cmd->nargs != 2){
+			perrorSmash("unalias", "expected 1 argument");
+			return SMASH_FAIL;
+		}
+
+		char* name = cmd->args[1];
+		int idx = find_alias(name);
+		if (idx < 0){
+			perrorSmash("unalias", "alias not found");
+			return SMASH_FAIL;
+		}
+
+		// Remove alias by shifting array
+		for (int i = idx; i < num_aliases - 1; i++){
+			strcpy(aliases[i].name, aliases[i+1].name);
+			strcpy(aliases[i].command, aliases[i+1].command);
+		}
+		num_aliases--;
+		return SMASH_SUCCESS;
+	}
 
 	// Not a built-in command - execute as external command
 	else {

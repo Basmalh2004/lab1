@@ -51,6 +51,16 @@ typedef struct {
 extern Job jobs_list[JOBS_NUM_MAX];
 extern char old_pwd[CMD_LENGTH_MAX];
 
+// Alias support (defined in smash.c)
+#define MAX_ALIASES 50
+typedef struct {
+    char name[CMD_LENGTH_MAX];
+    char command[CMD_LENGTH_MAX];
+} Alias;
+extern Alias aliases[MAX_ALIASES];
+extern int num_aliases;
+int find_alias(const char* name);
+
 /*=============================================================================
 * error handling - some useful macros and examples of error handling,
 * feel free to not use any of this
