@@ -170,9 +170,8 @@ int fg_command(int jobId){
     int status;
     my_system_call(SYS_WAITPID, pid, &status, WUNTRACED);
 	tcsetpgrp(STDIN_FILENO, shell_pid);
-     if (WIFSTOPPED(status))
-        return  STILL_STOPPED;
-
+	if (WIFSTOPPED(status))
+		return STILL_STOPPED;
 
 	return SMASH_SUCCESS;
 }
@@ -449,9 +448,7 @@ int command_handler(Command* cmd){
 		}
 
 		if (!S_ISDIR(st.st_mode)){
-			char error_msg[CMD_LENGTH_MAX];
-			snprintf(error_msg, sizeof(error_msg), "%s: not a directory", target_path);
-			perrorSmash("cd", error_msg);
+			perrorSmash("cd", "not a directory");
 			return SMASH_FAIL;
 		}
 
