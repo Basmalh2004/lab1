@@ -26,7 +26,6 @@
  * @return The result of the system call matching the given number from the defined list.  
  *         The output is identical to that of invoking the corresponding system call directly  
  *         (see each call’s behavior in its respective man page).
- */
-long my_system_call(int syscall_number, ...);
+ */long my_system_call(int syscall_number, ...);
 
 #endif
