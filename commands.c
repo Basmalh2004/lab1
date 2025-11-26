@@ -256,74 +256,6 @@ int exec_cd(JobsList* cmd_list, Command* cmd) {
 
     return 0;
 }
-
-void exec_jobs(JobsList* cmd_list, Command* cmd) {
-    if (!cmd) {
-        fprintf(stderr, "smash error: internal: cmd is NULL in jobs\n");
-        return;
-    }
-    if (cmd->num_of_args > 0) {
-        fprintf(stderr, "smash error: jobs: expected 0 arguments\n");
-        return;
-    }
-
-    for (int i = 0; i < JOBS_NUM_MAX; i++) {
-        Command* job = cmd_list->jobs_list[i];
-        if (job) {
-            time_t elapsed = time(NULL) - job->start_time;
-            const char* status = (job->cmd_status == STOPPED) ? "Stopped" : "Running";
-            printf("[%d] %s %s %ld secs\n", job->id, job->full_cmd, status, (long)elapsed);
-        }
-    }
-}
-
-void exec_kill(JobsList* cmd_list, Command* cmd) {
-    if (!cmd) {
-        fprintf(stderr, "smash error: internal: cmd is NULL in kill\n");
-        return;
-    }
-    if (cmd->num_of_args != 2) {
-        fprintf(stderr, "smash error: kill: invalid arguments\n");
-        return;
-    }
-
-    // First argument should be signal number (with optional -)
-    char* sig_str = cmd->args[0];
-    if (sig_str[0] != '-') {
-        fprintf(stderr, "smash error: kill: invalid arguments\n");
-        return;
-    }
-
-    int signum = atoi(sig_str + 1); // Skip the '-'
-    if (signum <= 0) {
-        fprintf(stderr, "smash error: kill: invalid signal number\n");
-        return;
-    }
-
-    // Second argument should be job ID
-    char* job_str = cmd->args[1];
-    for (int i = 0; job_str[i]; i++) {
-        if (!isdigit(job_str[i])) {
-            fprintf(stderr, "smash error: kill: invalid job id\n");
-            return;
-        }
-    }
-
-    int job_id = atoi(job_str);
-    Command* job = findjobbyid(cmd_list, job_id);
-    if (!job) {
-        fprintf(stderr, "smash error: kill: job-id %d does not exist\n", job_id);
-        return;
-    }
-
-    if (kill(job->pid, signum) == -1) {
-        perror("smash error: kill failed");
-        return;
-    }
-
-    printf("signal number %d was sent to pid %d\n", signum, job->pid);
-}
-
 Command *findjobbyid(JobsList* cmd_list, int id) {
     for (int i = 0; i < JOBS_NUM_MAX; ++i) {
         if (cmd_list->jobs_list[i] && cmd_list->jobs_list[i]->id == id) {
@@ -332,32 +264,26 @@ Command *findjobbyid(JobsList* cmd_list, int id) {
     }
     return NULL;
 }
-
 Command *findmaxjobid(JobsList* cmd_list) {
     Command* max = NULL;
     for (int i = 0; i < JOBS_NUM_MAX; ++i) {
         if (!cmd_list->jobs_list[i]) {
             continue;
         }
-        if (!max || cmd_list->jobs_list[i]->id > max->id) {
+        if (max == NULL || cmd_list->jobs_list[i]->id > max->id) {
             max = cmd_list->jobs_list[i];
         }
     }
     return max;
 }
-
-void removejobbyid(JobsList* cmd_list, int job_id) {
+void removejobbyid(JobsList* cmd_list, int id) {
     if (!cmd_list) {
         return;
     }
     for (int i = 0; i < JOBS_NUM_MAX; ++i) {
         Command *removeable = cmd_list->jobs_list[i];
-        if (removeable && removeable->id == job_id) {
+        if (removeable && removeable->id == id) {
             cmd_list->jobs_list[i] = NULL;
-            for (int j = 0; j < removeable->num_of_args; j++) {
-                free(removeable->args[j]);
-            }
-            free(removeable->oldpwd);
             free(removeable);
             return;
         }
@@ -365,7 +291,7 @@ void removejobbyid(JobsList* cmd_list, int job_id) {
 }
 int exec_fg(JobsList* cmd_list, Command* cmd) {
     if (!cmd) {
-        fprintf(stderr, "smash error: fg: invalid command\n");
+        fprintf(stderr, "smash error: internal: cmd is NULL in fg\n");
         return 1;
     }
     if (cmd->num_of_args > 1) {
@@ -375,13 +301,9 @@ int exec_fg(JobsList* cmd_list, Command* cmd) {
 
     Command *job = NULL;
     if (cmd->num_of_args == 1) {
-        // Check if argument is a valid number
-        char* arg = cmd->args[0];
-        for (int i = 0; arg[i]; i++) {
-            if (!isdigit(arg[i])) {
-                fprintf(stderr, "smash error: fg: invalid job id\n");
-                return 1;
-            }
+        if (cmd->args[0] == NULL) {
+            fprintf(stderr, "smash error: fg: invalid argument\n");
+            return 1;
         }
         int job_id = atoi(arg);
         job = findjobbyid(cmd_list, job_id);
@@ -397,168 +319,31 @@ int exec_fg(JobsList* cmd_list, Command* cmd) {
         }
     }
 
-    printf("%s\n", job->full_cmd);
-
-    // If job is stopped, send SIGCONT to resume it
     if (job->cmd_status == STOPPED) {
-        if (kill(job->pid, SIGCONT) == -1) {
-            perror("smash error: kill failed");
+        if (my_system_call(SYS_KILL, job->pid, SIGCONT) == -1) {
+            perror("smash error: fg: kill failed");
             return 1;
         }
     }
 
-    // Wait for the job to finish or stop
+    job->start_time = time(NULL);
+    job->cmd_status = FOREGROUND;
+
     int status;
-    pid_t ret = waitpid(job->pid, &status, WUNTRACED);
+    pid_t ret = my_system_call(SYS_WAITPID, job->pid, &status, WUNTRACED);
     if (ret == -1) {
-        perror("smash error: waitpid failed");
+        perror("smash error: fg: waitpid failed");
         return 1;
     }
 
     if (WIFSTOPPED(status)) {
-        // Job was stopped (Ctrl-Z)
         job->cmd_status = STOPPED;
+        job->start_time = time(NULL);
     } else {
-        // Job finished, remove it from the jobs list
         removejobbyid(cmd_list, job->id);
     }
 
     return 0;
-}
-
-void exec_bg(JobsList* cmd_list, Command* cmd) {
-    if (!cmd) {
-        fprintf(stderr, "smash error: bg: invalid command\n");
-        return;
-    }
-    if (cmd->num_of_args > 1) {
-        fprintf(stderr, "smash error: bg: too many arguments\n");
-        return;
-    }
-
-    Command *job = NULL;
-    if (cmd->num_of_args == 1) {
-        // Check if argument is a valid number
-        char* arg = cmd->args[0];
-        for (int i = 0; arg[i]; i++) {
-            if (!isdigit(arg[i])) {
-                fprintf(stderr, "smash error: bg: invalid job id\n");
-                return;
-            }
-        }
-        int job_id = atoi(arg);
-        job = findjobbyid(cmd_list, job_id);
-        if (!job) {
-            fprintf(stderr, "smash error: bg: job-id %d does not exist\n", job_id);
-            return;
-        }
-    } else if (cmd->num_of_args == 0) {
-        job = findmaxjobid(cmd_list);
-        if (!job) {
-            fprintf(stderr, "smash error: bg: jobs list is empty\n");
-            return;
-        }
-    }
-
-    if (job->cmd_status != STOPPED) {
-        fprintf(stderr, "smash error: bg: job-id %d is already running in the background\n", job->id);
-        return;
-    }
-
-    printf("%s\n", job->full_cmd);
-
-    // Send SIGCONT to resume the stopped job
-    if (kill(job->pid, SIGCONT) == -1) {
-        perror("smash error: kill failed");
-        return;
-    }
-
-    job->cmd_status = BACKGROUND;
-}
-
-void exec_quit(JobsList* cmd_list, Command* cmd) {
-    if (!cmd) {
-        exit(0);
-    }
-
-    if (cmd->num_of_args > 1) {
-        fprintf(stderr, "smash error: quit: too many arguments\n");
-        return;
-    }
-
-    if (cmd->num_of_args == 1 && strcmp(cmd->args[0], "kill") == 0) {
-        // Kill all jobs
-        for (int i = 0; i < JOBS_NUM_MAX; i++) {
-            Command* job = cmd_list->jobs_list[i];
-            if (job) {
-                printf("Killing job %d: %s\n", job->id, job->full_cmd);
-                if (kill(job->pid, SIGKILL) == -1) {
-                    perror("smash error: kill failed");
-                }
-            }
-        }
-    }
-
-    exit(0);
-}
-
-void exec_diff(JobsList* cmd_list, Command* cmd) {
-    if (!cmd) {
-        fprintf(stderr, "smash error: diff: invalid command\n");
-        return;
-    }
-    if (cmd->num_of_args != 2) {
-        fprintf(stderr, "smash error: diff: invalid arguments\n");
-        return;
-    }
-
-    char* file1 = cmd->args[0];
-    char* file2 = cmd->args[1];
-
-    FILE* f1 = fopen(file1, "r");
-    if (!f1) {
-        perror("smash error: diff");
-        return;
-    }
-
-    FILE* f2 = fopen(file2, "r");
-    if (!f2) {
-        perror("smash error: diff");
-        fclose(f1);
-        return;
-    }
-
-    // Read both files and compare
-    char line1[CMD_LENGTH_MAX];
-    char line2[CMD_LENGTH_MAX];
-    int line_num = 1;
-    int differ = 0;
-
-    while (1) {
-        char* r1 = fgets(line1, CMD_LENGTH_MAX, f1);
-        char* r2 = fgets(line2, CMD_LENGTH_MAX, f2);
-
-        if (r1 == NULL && r2 == NULL) {
-            // Both files ended at the same time
-            break;
-        }
-
-        if (r1 == NULL || r2 == NULL || strcmp(line1, line2) != 0) {
-            differ = 1;
-            break;
-        }
-
-        line_num++;
-    }
-
-    fclose(f1);
-    fclose(f2);
-
-    if (differ) {
-        printf("diff: %s %s differ\n", file1, file2);
-    } else {
-        printf("diff: %s %s are identical\n", file1, file2);
-    }
 }
 
 
