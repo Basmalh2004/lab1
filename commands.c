@@ -1,8 +1,10 @@
 //commands.c
+#define _POSIX_C_SOURCE 200809L
 #include "commands.h"
-
-#include "my_system_call.h"
-#include "unistd.h"
+#include <unistd.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include <ctype.h>
 
 
 
@@ -46,35 +48,40 @@ Command* ParseCmd(char* line)
     }
     strcpy(cmd_ptr->full_cmd, line);
     cmd_ptr->full_cmd[strlen(cmd_ptr->full_cmd)-1] = '\0';
-    cmd_ptr->start_time = 0; //RB----------------------------
+    cmd_ptr->start_time = 0;
     cmd_ptr->id = INIT_ID;
     cmd_ptr->pid = getpid();
+    cmd_ptr->cmd_status = FOREGROUND;
+    cmd_ptr->oldpwd = NULL;
 
     char* delimiters = " \t\n"; //parsing should be done by spaces, tabs or newlines
     char* cmd = strtok(line, delimiters); //read strtok documentation - parses string by delimiters
+
+    if(!cmd) {
+        free(cmd_ptr);
+        return NULL; //this means no tokens were found, most like since command is invalid
+    }
+
     strcpy(cmd_ptr->cmd, cmd);
 
-    if(!cmd)
-        return INVALID_COMMAND; //this means no tokens were found, most like since command is invalid
-
-    char* args[MAX_ARGS];
     int nargs = 0;
-
-    args[0] = cmd; //first token before spaces/tabs/newlines should be command name
+    cmd_ptr->args[0] = NULL; //args don't include the command itself
 
     for(int i = 1; i < MAX_ARGS; i++)
     {
-        args[i] = strtok(NULL, delimiters); //first arg NULL -> keep tokenizing from previous call
-        if(!args[i])
+        char* arg = strtok(NULL, delimiters); //first arg NULL -> keep tokenizing from previous call
+        if(!arg)
             break;
-        nargs++;
 
-        if (strcmp(args[i], "&") == 0) {
-            args[i] = NULL;
-            nargs--;
+        if (strcmp(arg, "&") == 0) {
             cmd_ptr->cmd_status = BACKGROUND;
+            break;
         }
+
+        cmd_ptr->args[nargs] = strdup(arg);
+        nargs++;
     }
+    cmd_ptr->args[nargs] = NULL;
     cmd_ptr->num_of_args = nargs;
 
     return cmd_ptr;
@@ -150,15 +157,20 @@ void CheckCommand(JobsList* jobs_list, Command* command) {
 
 
 void ExecBackgroundCmd(JobsList* jobs_list, Command* command) {
-    pid_t pid = my_system_call(SYS_FORK);
+    pid_t pid = fork();
     if (pid < 0) {
-        //TODO: Print Error
+        perror("smash error: fork failed");
+        return;
     }
     if (pid == 0) {
-
-
+        // Child process - execute the command
+        // Note: This is a stub - actual implementation would use execvp
+        exit(0);
     } else {
-
+        // Parent process - store the background job
+        command->pid = pid;
+        command->start_time = time(NULL);
+        printf("[%d] %d\n", command->id, pid);
     }
 }
 
@@ -196,6 +208,8 @@ void exec_pwd(JobsList* cmd_list, Command* cmd){
     printf("%s \n",cwd);
 }
 int exec_cd(JobsList* cmd_list, Command* cmd) {
+    extern char *oldpwd;
+
     if (!cmd) {
         fprintf(stderr, "smash error: internal: cmd is NULL in cd\n");
         return 1;
@@ -221,12 +235,12 @@ int exec_cd(JobsList* cmd_list, Command* cmd) {
         char *arg = cmd->args[0];
 
         if (strcmp(arg, "-") == 0) {
-            if (!cmd->oldpwd) {
+            if (!oldpwd) {
                 fprintf(stderr, "smash error: cd: OLDPWD not set\n");
                 free(prev_cwd);
                 return 1;
             }
-            targetdir = cmd->oldpwd;
+            targetdir = oldpwd;
         } else {
             targetdir = arg;
         }
@@ -237,8 +251,8 @@ int exec_cd(JobsList* cmd_list, Command* cmd) {
         free(prev_cwd);
         return 1;
     }
-    free(cmd->oldpwd);
-    cmd->oldpwd = prev_cwd;
+    free(oldpwd);
+    oldpwd = prev_cwd;
 
     return 0;
 }
@@ -291,7 +305,7 @@ int exec_fg(JobsList* cmd_list, Command* cmd) {
             fprintf(stderr, "smash error: fg: invalid argument\n");
             return 1;
         }
-        int job_id = atoi(cmd->args[0]);
+        int job_id = atoi(arg);
         job = findjobbyid(cmd_list, job_id);
         if (!job) {
             fprintf(stderr, "smash error: fg: job-id %d does not exist\n", job_id);

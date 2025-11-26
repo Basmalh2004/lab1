@@ -6,6 +6,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
+#include <sys/types.h>
+#include <string.h>
 #define CMD_LENGTH_MAX 120
 #define MAX_ARGS 20
 #define JOBS_NUM_MAX 100
@@ -58,12 +60,12 @@ typedef enum {
 } CommandStatus;
 
 typedef struct {
-    char* cmd;
-    char* full_cmd;
+    char cmd[CMD_LENGTH_MAX];
+    char full_cmd[CMD_LENGTH_MAX];
     char *oldpwd;
     char* args[MAX_ARGS];
     int id;
-    int pid;
+    pid_t pid;
     time_t start_time;
     int num_of_args;
     CommandStatus cmd_status;
@@ -87,13 +89,17 @@ JobsList* Init_Jobs();
 
 void exec_showpid(JobsList* cmd_list, Command* cmd);
 void exec_pwd(JobsList* cmd_list, Command* cmd);
-void exec_cd(JobsList* cmd_list, Command* cmd);
+int exec_cd(JobsList* cmd_list, Command* cmd);
 void exec_jobs(JobsList* cmd_list, Command* cmd);
 void exec_kill(JobsList* cmd_list, Command* cmd);
-void exec_fg(JobsList* cmd_list, Command* cmd);
+int exec_fg(JobsList* cmd_list, Command* cmd);
 void exec_bg(JobsList* cmd_list, Command* cmd);
 void exec_quit(JobsList* cmd_list, Command* cmd);
 void exec_diff(JobsList* cmd_list, Command* cmd);
+
+Command* findjobbyid(JobsList* cmd_list, int id);
+Command* findmaxjobid(JobsList* cmd_list);
+void removejobbyid(JobsList* cmd_list, int job_id);
 
 
 #endif //COMMANDS_H
