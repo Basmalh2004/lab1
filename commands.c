@@ -292,12 +292,14 @@ int exec_fg(JobsList* cmd_list, Command* cmd) {
     }
 
     Command *job = NULL;
+    int job_id = -1;
+
     if (cmd->num_of_args == 1) {
         if (cmd->args[0] == NULL) {
             fprintf(stderr, "smash error: fg: invalid argument\n");
             return 1;
         }
-        int job_id = atoi(cmd->args[0]);
+        job_id = atoi(cmd->args[0]);
         job = findjobbyid(cmd_list, job_id);
         if (!job) {
             fprintf(stderr, "smash error: fg: job-id %d does not exist\n", job_id);
@@ -309,8 +311,13 @@ int exec_fg(JobsList* cmd_list, Command* cmd) {
             fprintf(stderr, "smash error: fg: jobs list is empty\n");
             return 1;
         }
+        job_id = job->id;
     }
 
+    // Print the command being brought to foreground
+    printf("%s : %d\n", job->full_cmd, job->pid);
+
+    // Send SIGCONT if the job is stopped
     if (job->cmd_status == STOPPED) {
         if (my_system_call(SYS_KILL, job->pid, SIGCONT) == -1) {
             perror("smash error: fg: kill failed");
@@ -318,21 +325,28 @@ int exec_fg(JobsList* cmd_list, Command* cmd) {
         }
     }
 
-    job->start_time = time(NULL);
-    job->cmd_status = FOREGROUND;
+    // Remove job from list before bringing to foreground
+    // (foreground jobs are not tracked in the jobs list)
+    removejobbyid(cmd_list, job_id);
 
+    // Wait for the job to complete or stop
     int status;
     pid_t ret = my_system_call(SYS_WAITPID, job->pid, &status, WUNTRACED);
     if (ret == -1) {
         perror("smash error: fg: waitpid failed");
+        free(job);
         return 1;
     }
 
+    // If job was stopped (Ctrl+Z), add it back to jobs list
     if (WIFSTOPPED(status)) {
         job->cmd_status = STOPPED;
         job->start_time = time(NULL);
+        AddCommand(cmd_list, job);
     } else {
-        removejobbyid(cmd_list, job->id);
+        // Job completed or was terminated - free the memory
+        free(job->oldpwd);
+        free(job);
     }
 
     return 0;
