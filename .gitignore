@@ -1,0 +1,10 @@
+# Object files
+*.o
+
+# Executables
+smash
+
+# Temporary files
+*.swp
+*.swo
+*~
