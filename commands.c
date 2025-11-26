@@ -242,36 +242,34 @@ int exec_cd(JobsList* cmd_list, Command* cmd) {
 
     return 0;
 }
-Command *findjobbyid(JobsList* cmd_list, Command* cmd,int id ){
-    for (int i = 0; i <JOBS_NUM_MAX ; ++i) {
-        if( cmd_list->jobs_list[i]&& cmd_list->jobs_list[i]=id){
+Command *findjobbyid(JobsList* cmd_list, int id) {
+    for (int i = 0; i < JOBS_NUM_MAX; ++i) {
+        if (cmd_list->jobs_list[i] && cmd_list->jobs_list[i]->id == id) {
             return cmd_list->jobs_list[i];
         }
-        return -1;
     }
-
+    return NULL;
 }
-Command *findmaxjobid(JobsList* cmd_list ){
-    Command* max== NULL ;
+Command *findmaxjobid(JobsList* cmd_list) {
+    Command* max = NULL;
     for (int i = 0; i < JOBS_NUM_MAX; ++i) {
-        if(!cmd_list->jobs_list[i]){
+        if (!cmd_list->jobs_list[i]) {
             continue;
         }
-       if (cmd_list->jobs_list[i]->id>max->id){
-            max->id=cmd_list->jobs_list[i];
+        if (max == NULL || cmd_list->jobs_list[i]->id > max->id) {
+            max = cmd_list->jobs_list[i];
         }
-
     }
     return max;
 }
-void removejobbyid(JobsList* cmd_list, Command* cmd) {
+void removejobbyid(JobsList* cmd_list, int id) {
     if (!cmd_list) {
         return;
     }
     for (int i = 0; i < JOBS_NUM_MAX; ++i) {
         Command *removeable = cmd_list->jobs_list[i];
-        if(removeable&& removeable->id==removeable->args[0]){
-            cmd_list->jobs_list[i]=NULL;
+        if (removeable && removeable->id == id) {
+            cmd_list->jobs_list[i] = NULL;
             free(removeable);
             return;
         }
@@ -279,56 +277,59 @@ void removejobbyid(JobsList* cmd_list, Command* cmd) {
 }
 int exec_fg(JobsList* cmd_list, Command* cmd) {
     if (!cmd) {
-        //error
+        fprintf(stderr, "smash error: internal: cmd is NULL in fg\n");
+        return 1;
     }
     if (cmd->num_of_args > 1) {
-        //error
+        fprintf(stderr, "smash error: fg: too many arguments\n");
+        return 1;
     }
+
     Command *job = NULL;
     if (cmd->num_of_args == 1) {
-        if (cmd->args[0] != NULL) {
-            //error
+        if (cmd->args[0] == NULL) {
+            fprintf(stderr, "smash error: fg: invalid argument\n");
+            return 1;
         }
         int job_id = atoi(cmd->args[0]);
         job = findjobbyid(cmd_list, job_id);
-        if (!job_id) {
-            //error
-        }
-
-    }
-    if (cmd->num_of_args == 0 && strcmp(cmd, "fg")) {
-        job = findmaxjobid(cmd_list);
         if (!job) {
-            //error
-        }
-    }
-    if (job->cmd_status == STOPPED) {
-        my_system_call(SYS_KILL(job->pid, SIGCONT) == -1)
-        {
-            //error
-        }
-        job->cmd_status = BACKGROUND;
-    } else {
-        job->start_time = time(NULL);  // זמן חדש לתחילת הריצה
-        g_fg_pid = job->pid;
-
-        int status;
-        pid_t ret = waitpid(job->pid, &status, WUNTRACED);
-        if (ret == -1) {
-            perror("smash error: fg: waitpid failed");
-            g_fg_pid = -1;
+            fprintf(stderr, "smash error: fg: job-id %d does not exist\n", job_id);
             return 1;
         }
-        if (WIFSTOPPED(status)) {
-            job->cmd_status = STOPPED;
-            job->start_time = time(NULL);
-        } else {
-            removeJobById(jobs, job->id);
+    } else if (cmd->num_of_args == 0) {
+        job = findmaxjobid(cmd_list);
+        if (!job) {
+            fprintf(stderr, "smash error: fg: jobs list is empty\n");
+            return 1;
         }
-
-        g_fg_pid = -1;
-        return 0;
     }
+
+    if (job->cmd_status == STOPPED) {
+        if (my_system_call(SYS_KILL, job->pid, SIGCONT) == -1) {
+            perror("smash error: fg: kill failed");
+            return 1;
+        }
+    }
+
+    job->start_time = time(NULL);
+    job->cmd_status = FOREGROUND;
+
+    int status;
+    pid_t ret = my_system_call(SYS_WAITPID, job->pid, &status, WUNTRACED);
+    if (ret == -1) {
+        perror("smash error: fg: waitpid failed");
+        return 1;
+    }
+
+    if (WIFSTOPPED(status)) {
+        job->cmd_status = STOPPED;
+        job->start_time = time(NULL);
+    } else {
+        removejobbyid(cmd_list, job->id);
+    }
+
+    return 0;
 }
 
 
