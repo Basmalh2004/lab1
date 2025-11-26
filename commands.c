@@ -363,15 +363,19 @@ void exec_jobs(JobsList* cmd_list, Command* cmd) {
         return;
     }
 
+    // Print all background jobs
     for (int i = 0; i < JOBS_NUM_MAX; ++i) {
         if (cmd_list->jobs_list[i]) {
             Command* job = cmd_list->jobs_list[i];
             time_t elapsed = time(NULL) - job->start_time;
+
+            // Format: [job_id] command : pid elapsed_secs secs (stopped)
             printf("[%d] %s : %d %ld secs",
                    job->id,
                    job->full_cmd,
                    job->pid,
                    (long)elapsed);
+
             if (job->cmd_status == STOPPED) {
                 printf(" (stopped)");
             }
@@ -405,18 +409,32 @@ void exec_kill(JobsList* cmd_list, Command* cmd) {
     int sig = atoi(cmd->args[0] + 1); // skip the '-'
     int job_id = atoi(cmd->args[1]);
 
+    // Validate signal number
+    if (sig <= 0) {
+        fprintf(stderr, "smash error: kill: invalid signal number\n");
+        return;
+    }
+
     Command* job = findjobbyid(cmd_list, job_id);
     if (!job) {
         fprintf(stderr, "smash error: kill: job-id %d does not exist\n", job_id);
         return;
     }
 
-    if (my_system_call(SYS_KILL, job->pid, sig) == -1) {
+    pid_t pid = job->pid;
+
+    // Send the signal
+    if (my_system_call(SYS_KILL, pid, sig) == -1) {
         perror("smash error: kill failed");
         return;
     }
 
-    printf("signal number %d was sent to pid %d\n", sig, job->pid);
+    printf("signal number %d was sent to pid %d\n", sig, pid);
+
+    // If signal is SIGKILL or SIGTERM, remove job from list
+    if (sig == SIGKILL || sig == SIGTERM) {
+        removejobbyid(cmd_list, job_id);
+    }
 }
 
 void exec_bg(JobsList* cmd_list, Command* cmd) {
@@ -443,23 +461,36 @@ void exec_bg(JobsList* cmd_list, Command* cmd) {
             return;
         }
     } else {
-        job = findmaxjobid(cmd_list);
+        // Find the last stopped job (highest ID among stopped jobs)
+        Command* last_stopped = NULL;
+        for (int i = 0; i < JOBS_NUM_MAX; ++i) {
+            if (cmd_list->jobs_list[i] &&
+                cmd_list->jobs_list[i]->cmd_status == STOPPED) {
+                if (!last_stopped || cmd_list->jobs_list[i]->id > last_stopped->id) {
+                    last_stopped = cmd_list->jobs_list[i];
+                }
+            }
+        }
+        job = last_stopped;
         if (!job) {
             fprintf(stderr, "smash error: bg: there is no stopped jobs to resume\n");
             return;
         }
     }
 
+    // Check if job is stopped
     if (job->cmd_status != STOPPED) {
         fprintf(stderr, "smash error: bg: job-id %d is already running in the background\n", job->id);
         return;
     }
 
+    // Send SIGCONT to resume the job
     if (my_system_call(SYS_KILL, job->pid, SIGCONT) == -1) {
         perror("smash error: bg: kill failed");
         return;
     }
 
+    // Update job status and print
     job->cmd_status = BACKGROUND;
     printf("%s : %d\n", job->full_cmd, job->pid);
 }
@@ -481,7 +512,17 @@ void exec_quit(JobsList* cmd_list, Command* cmd) {
     }
 
     if (kill_all) {
-        printf("smash: sending SIGKILL signal to %d jobs:\n", JOBS_NUM_MAX);
+        // Count actual jobs
+        int job_count = 0;
+        for (int i = 0; i < JOBS_NUM_MAX; ++i) {
+            if (cmd_list->jobs_list[i]) {
+                job_count++;
+            }
+        }
+
+        printf("smash: sending SIGKILL signal to %d jobs:\n", job_count);
+
+        // Kill all jobs
         for (int i = 0; i < JOBS_NUM_MAX; ++i) {
             if (cmd_list->jobs_list[i]) {
                 Command* job = cmd_list->jobs_list[i];
@@ -505,9 +546,39 @@ void exec_diff(JobsList* cmd_list, Command* cmd) {
         return;
     }
 
-    // This is a placeholder - actual implementation would use fork/exec
-    // to run the diff command
-    fprintf(stderr, "smash error: diff: not implemented\n");
+    // Validate arguments
+    if (!cmd->args[0] || !cmd->args[1]) {
+        fprintf(stderr, "smash error: diff: invalid arguments\n");
+        return;
+    }
+
+    // Fork a child process
+    pid_t pid = my_system_call(SYS_FORK);
+    if (pid < 0) {
+        perror("smash error: fork failed");
+        return;
+    }
+
+    if (pid == 0) {
+        // Child process - execute diff command
+        char* argv[4];
+        argv[0] = "diff";
+        argv[1] = cmd->args[0];
+        argv[2] = cmd->args[1];
+        argv[3] = NULL;
+
+        // Execute diff
+        if (my_system_call(SYS_EXECVP, "diff", argv) == -1) {
+            perror("smash error: execvp failed");
+            exit(1);
+        }
+    } else {
+        // Parent process - wait for child
+        int status;
+        if (my_system_call(SYS_WAITPID, pid, &status, 0) == -1) {
+            perror("smash error: waitpid failed");
+        }
+    }
 }
 
 
