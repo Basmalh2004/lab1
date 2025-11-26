@@ -22,24 +22,26 @@ char *oldpwd;
 * main function
 =============================================================================*/
 int main(int argc, char* argv[])
-        char _cmd[CMD_LENGTH_MAX];
-while(1) {
-JobsList* jobs = Init_Jobs();
+{
+    char _cmd[CMD_LENGTH_MAX];
+    JobsList* jobs = Init_Jobs();
 
-// init to jobs
-printf("smash > ");
-fgets(_line, CMD_LENGTH_MAX, stdin);
-strcpy(_cmd, _line);
-_cmd[CMD_LENGTH_MAX-1] = '\0';
-//execute command
-Command* cmd_res = ParseCmd(_cmd);
-if (cmd_res->cmd_status == BACKGROUND) {
-AddCommand(jobs,cmd_res);
-}
+    while(1) {
+        // init to jobs
+        printf("smash > ");
+        fgets(_line, CMD_LENGTH_MAX, stdin);
+        strcpy(_cmd, _line);
+        _cmd[CMD_LENGTH_MAX-1] = '\0';
+        //execute command
+        Command* cmd_res = ParseCmd(_cmd);
+        if (cmd_res && cmd_res->cmd_status == BACKGROUND) {
+            AddCommand(jobs,cmd_res);
+        }
 
-//initialize buffers for next command
-_line[0] = '\0';
-_cmd[0] = '\0';
+        //initialize buffers for next command
+        _line[0] = '\0';
+        _cmd[0] = '\0';
+    }
 
-	return 0;
+    return 0;
 }
