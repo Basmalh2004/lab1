@@ -58,8 +58,8 @@ typedef enum {
 } CommandStatus;
 
 typedef struct {
-    char* cmd;
-    char* full_cmd;
+    char cmd[CMD_LENGTH_MAX];
+    char full_cmd[CMD_LENGTH_MAX];
     char *oldpwd;
     char* args[MAX_ARGS];
     int id;
@@ -87,10 +87,10 @@ JobsList* Init_Jobs();
 
 void exec_showpid(JobsList* cmd_list, Command* cmd);
 void exec_pwd(JobsList* cmd_list, Command* cmd);
-void exec_cd(JobsList* cmd_list, Command* cmd);
+int exec_cd(JobsList* cmd_list, Command* cmd);
 void exec_jobs(JobsList* cmd_list, Command* cmd);
 void exec_kill(JobsList* cmd_list, Command* cmd);
-void exec_fg(JobsList* cmd_list, Command* cmd);
+int exec_fg(JobsList* cmd_list, Command* cmd);
 void exec_bg(JobsList* cmd_list, Command* cmd);
 void exec_quit(JobsList* cmd_list, Command* cmd);
 void exec_diff(JobsList* cmd_list, Command* cmd);

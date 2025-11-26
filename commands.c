@@ -2,7 +2,10 @@
 #include "commands.h"
 
 #include "my_system_call.h"
-#include "unistd.h"
+#include <unistd.h>
+#include <string.h>
+#include <signal.h>
+#include <sys/wait.h>
 
 
 
@@ -44,54 +47,55 @@ Command* ParseCmd(char* line)
     if (!cmd_ptr) {
         return NULL;
     }
-    strcpy(cmd_ptr->full_cmd, line);
-    cmd_ptr->full_cmd[strlen(cmd_ptr->full_cmd)-1] = '\0';
-    cmd_ptr->start_time = 0; //RB----------------------------
+
+    // Initialize fields
+    cmd_ptr->oldpwd = NULL;
+    cmd_ptr->cmd_status = FOREGROUND;
+    cmd_ptr->start_time = 0;
     cmd_ptr->id = INIT_ID;
     cmd_ptr->pid = getpid();
 
+    strcpy(cmd_ptr->full_cmd, line);
+    cmd_ptr->full_cmd[strlen(cmd_ptr->full_cmd)-1] = '\0';
+
     char* delimiters = " \t\n"; //parsing should be done by spaces, tabs or newlines
     char* cmd = strtok(line, delimiters); //read strtok documentation - parses string by delimiters
+
+    if(!cmd) {
+        free(cmd_ptr);
+        return NULL; //this means no tokens were found, most likely since command is invalid
+    }
+
     strcpy(cmd_ptr->cmd, cmd);
 
-    if(!cmd)
-        return INVALID_COMMAND; //this means no tokens were found, most like since command is invalid
-
-    char* args[MAX_ARGS];
     int nargs = 0;
+    cmd_ptr->args[0] = NULL; //first arg is NULL by default
 
-    args[0] = cmd; //first token before spaces/tabs/newlines should be command name
-
-    for(int i = 1; i < MAX_ARGS; i++)
+    for(int i = 0; i < MAX_ARGS; i++)
     {
-        args[i] = strtok(NULL, delimiters); //first arg NULL -> keep tokenizing from previous call
-        if(!args[i])
+        char* arg = (i == 0) ? cmd : strtok(NULL, delimiters);
+        if(!arg)
             break;
-        nargs++;
 
-        if (strcmp(args[i], "&") == 0) {
-            args[i] = NULL;
-            nargs--;
+        if (strcmp(arg, "&") == 0) {
             cmd_ptr->cmd_status = BACKGROUND;
+            break;
+        }
+
+        // Copy argument - skip first one as it's the command itself
+        if (i > 0) {
+            cmd_ptr->args[nargs] = arg;
+            nargs++;
         }
     }
+
     cmd_ptr->num_of_args = nargs;
+    // NULL terminate args
+    if (nargs < MAX_ARGS) {
+        cmd_ptr->args[nargs] = NULL;
+    }
 
     return cmd_ptr;
-    /*
-    At this point cmd contains the command string and the args array contains
-    the arguments. You can return them via struct/class, for example in C:
-        typedef struct {
-            char* cmd;
-            char* args[MAX_ARGS];
-        } Command;
-    Or maybe something more like this:
-        typedef struct {
-            bool bg;
-            char** args;
-            int nargs;
-        } CmdArgs;
-    */
 }
 
 void AddCommand(JobsList* cmd_list, Command* command) {
@@ -179,7 +183,6 @@ void exec_showpid(JobsList* cmd_list, Command* cmd) {
 }
 
 void exec_pwd(JobsList* cmd_list, Command* cmd){
-    char* cwd = getcwd(NULL,0);
     if (!cmd) {
         fprintf(stderr, "smash error: internal: cmd is NULL in pwd\n");
         return;
@@ -189,11 +192,14 @@ void exec_pwd(JobsList* cmd_list, Command* cmd){
         fprintf(stderr, "smash error: pwd: expected 0 arguments\n");
         return;
     }
+
+    char* cwd = getcwd(NULL,0);
     if(!cwd) {
         perror("smash error: getcwd failed");
         return;
     }
-    printf("%s \n",cwd);
+    printf("%s\n",cwd);
+    free(cwd);
 }
 int exec_cd(JobsList* cmd_list, Command* cmd) {
     if (!cmd) {
@@ -330,6 +336,164 @@ int exec_fg(JobsList* cmd_list, Command* cmd) {
     }
 
     return 0;
+}
+
+void exec_jobs(JobsList* cmd_list, Command* cmd) {
+    if (!cmd) {
+        fprintf(stderr, "smash error: internal: cmd is NULL in jobs\n");
+        return;
+    }
+
+    if (cmd->num_of_args > 0) {
+        fprintf(stderr, "smash error: jobs: expected 0 arguments\n");
+        return;
+    }
+
+    for (int i = 0; i < JOBS_NUM_MAX; ++i) {
+        if (cmd_list->jobs_list[i]) {
+            Command* job = cmd_list->jobs_list[i];
+            time_t elapsed = time(NULL) - job->start_time;
+            printf("[%d] %s : %d %ld secs",
+                   job->id,
+                   job->full_cmd,
+                   job->pid,
+                   (long)elapsed);
+            if (job->cmd_status == STOPPED) {
+                printf(" (stopped)");
+            }
+            printf("\n");
+        }
+    }
+}
+
+void exec_kill(JobsList* cmd_list, Command* cmd) {
+    if (!cmd) {
+        fprintf(stderr, "smash error: internal: cmd is NULL in kill\n");
+        return;
+    }
+
+    if (cmd->num_of_args != 2) {
+        fprintf(stderr, "smash error: kill: invalid arguments\n");
+        return;
+    }
+
+    // args[0] should be -<signal>, args[1] should be <job-id>
+    if (!cmd->args[0] || !cmd->args[1]) {
+        fprintf(stderr, "smash error: kill: invalid arguments\n");
+        return;
+    }
+
+    if (cmd->args[0][0] != '-') {
+        fprintf(stderr, "smash error: kill: invalid arguments\n");
+        return;
+    }
+
+    int sig = atoi(cmd->args[0] + 1); // skip the '-'
+    int job_id = atoi(cmd->args[1]);
+
+    Command* job = findjobbyid(cmd_list, job_id);
+    if (!job) {
+        fprintf(stderr, "smash error: kill: job-id %d does not exist\n", job_id);
+        return;
+    }
+
+    if (my_system_call(SYS_KILL, job->pid, sig) == -1) {
+        perror("smash error: kill failed");
+        return;
+    }
+
+    printf("signal number %d was sent to pid %d\n", sig, job->pid);
+}
+
+void exec_bg(JobsList* cmd_list, Command* cmd) {
+    if (!cmd) {
+        fprintf(stderr, "smash error: internal: cmd is NULL in bg\n");
+        return;
+    }
+
+    if (cmd->num_of_args > 1) {
+        fprintf(stderr, "smash error: bg: invalid arguments\n");
+        return;
+    }
+
+    Command *job = NULL;
+    if (cmd->num_of_args == 1) {
+        if (cmd->args[0] == NULL) {
+            fprintf(stderr, "smash error: bg: invalid arguments\n");
+            return;
+        }
+        int job_id = atoi(cmd->args[0]);
+        job = findjobbyid(cmd_list, job_id);
+        if (!job) {
+            fprintf(stderr, "smash error: bg: job-id %d does not exist\n", job_id);
+            return;
+        }
+    } else {
+        job = findmaxjobid(cmd_list);
+        if (!job) {
+            fprintf(stderr, "smash error: bg: there is no stopped jobs to resume\n");
+            return;
+        }
+    }
+
+    if (job->cmd_status != STOPPED) {
+        fprintf(stderr, "smash error: bg: job-id %d is already running in the background\n", job->id);
+        return;
+    }
+
+    if (my_system_call(SYS_KILL, job->pid, SIGCONT) == -1) {
+        perror("smash error: bg: kill failed");
+        return;
+    }
+
+    job->cmd_status = BACKGROUND;
+    printf("%s : %d\n", job->full_cmd, job->pid);
+}
+
+void exec_quit(JobsList* cmd_list, Command* cmd) {
+    if (!cmd) {
+        fprintf(stderr, "smash error: internal: cmd is NULL in quit\n");
+        return;
+    }
+
+    if (cmd->num_of_args > 1) {
+        fprintf(stderr, "smash error: quit: invalid arguments\n");
+        return;
+    }
+
+    int kill_all = 0;
+    if (cmd->num_of_args == 1 && strcmp(cmd->args[0], "kill") == 0) {
+        kill_all = 1;
+    }
+
+    if (kill_all) {
+        printf("smash: sending SIGKILL signal to %d jobs:\n", JOBS_NUM_MAX);
+        for (int i = 0; i < JOBS_NUM_MAX; ++i) {
+            if (cmd_list->jobs_list[i]) {
+                Command* job = cmd_list->jobs_list[i];
+                printf("%d: %s\n", job->pid, job->full_cmd);
+                my_system_call(SYS_KILL, job->pid, SIGKILL);
+            }
+        }
+    }
+
+    exit(0);
+}
+
+void exec_diff(JobsList* cmd_list, Command* cmd) {
+    if (!cmd) {
+        fprintf(stderr, "smash error: internal: cmd is NULL in diff\n");
+        return;
+    }
+
+    if (cmd->num_of_args != 2) {
+        fprintf(stderr, "smash error: diff: invalid arguments\n");
+        return;
+    }
+
+    // This is a placeholder - actual implementation would use fork/exec
+    // to run the diff command
+    fprintf(stderr, "smash error: diff: not implemented\n");
 }
 
 
