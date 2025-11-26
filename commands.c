@@ -210,13 +210,18 @@ int exec_cd(JobsList* cmd_list, Command* cmd) {
         fprintf(stderr, "smash error: cd: too many arguments\n");
         return 1;
     }
+
+    // Get current directory before changing
     char *prev_cwd = getcwd(NULL, 0);
     if (!prev_cwd) {
         perror("smash error: getcwd failed");
         return 1;
     }
+
     char *targetdir = NULL;
+
     if (cmd->num_of_args == 0) {
+        // No argument - go to HOME
         targetdir = getenv("HOME");
         if (!targetdir) {
             fprintf(stderr, "smash error: cd: HOME not set\n");
@@ -224,9 +229,11 @@ int exec_cd(JobsList* cmd_list, Command* cmd) {
             return 1;
         }
     } else {
+        // Has argument
         char *arg = cmd->args[0];
 
         if (strcmp(arg, "-") == 0) {
+            // cd - means go to previous directory
             if (!cmd->oldpwd) {
                 fprintf(stderr, "smash error: cd: OLDPWD not set\n");
                 free(prev_cwd);
@@ -234,21 +241,31 @@ int exec_cd(JobsList* cmd_list, Command* cmd) {
             }
             targetdir = cmd->oldpwd;
         } else {
+            // Regular path
             targetdir = arg;
         }
     }
 
+    // Try to change directory
     if (chdir(targetdir) == -1) {
         perror("smash error: chdir failed");
         free(prev_cwd);
         return 1;
     }
-    free(cmd->oldpwd);
+
+    // Success - update oldpwd
+    if (cmd->oldpwd) {
+        free(cmd->oldpwd);
+    }
     cmd->oldpwd = prev_cwd;
 
     return 0;
 }
 Command *findjobbyid(JobsList* cmd_list, int id) {
+    if (!cmd_list || id < 0) {
+        return NULL;
+    }
+
     for (int i = 0; i < JOBS_NUM_MAX; ++i) {
         if (cmd_list->jobs_list[i] && cmd_list->jobs_list[i]->id == id) {
             return cmd_list->jobs_list[i];
@@ -257,25 +274,40 @@ Command *findjobbyid(JobsList* cmd_list, int id) {
     return NULL;
 }
 Command *findmaxjobid(JobsList* cmd_list) {
+    if (!cmd_list) {
+        return NULL;
+    }
+
     Command* max = NULL;
+    int max_id = -1;
+
     for (int i = 0; i < JOBS_NUM_MAX; ++i) {
         if (!cmd_list->jobs_list[i]) {
             continue;
         }
-        if (max == NULL || cmd_list->jobs_list[i]->id > max->id) {
+        // Find job with highest ID
+        if (cmd_list->jobs_list[i]->id > max_id) {
+            max_id = cmd_list->jobs_list[i]->id;
             max = cmd_list->jobs_list[i];
         }
     }
     return max;
 }
 void removejobbyid(JobsList* cmd_list, int id) {
-    if (!cmd_list) {
+    if (!cmd_list || id < 0) {
         return;
     }
+
     for (int i = 0; i < JOBS_NUM_MAX; ++i) {
         Command *removeable = cmd_list->jobs_list[i];
         if (removeable && removeable->id == id) {
+            // Clear the job from list
             cmd_list->jobs_list[i] = NULL;
+
+            // Free allocated memory
+            if (removeable->oldpwd) {
+                free(removeable->oldpwd);
+            }
             free(removeable);
             return;
         }
@@ -295,17 +327,23 @@ int exec_fg(JobsList* cmd_list, Command* cmd) {
     int job_id = -1;
 
     if (cmd->num_of_args == 1) {
+        // User specified job ID
         if (cmd->args[0] == NULL) {
             fprintf(stderr, "smash error: fg: invalid argument\n");
             return 1;
         }
         job_id = atoi(cmd->args[0]);
+        if (job_id < 0) {
+            fprintf(stderr, "smash error: fg: invalid job-id\n");
+            return 1;
+        }
         job = findjobbyid(cmd_list, job_id);
         if (!job) {
             fprintf(stderr, "smash error: fg: job-id %d does not exist\n", job_id);
             return 1;
         }
     } else if (cmd->num_of_args == 0) {
+        // No job ID - use max job
         job = findmaxjobid(cmd_list);
         if (!job) {
             fprintf(stderr, "smash error: fg: jobs list is empty\n");
@@ -314,12 +352,18 @@ int exec_fg(JobsList* cmd_list, Command* cmd) {
         job_id = job->id;
     }
 
+    // Save job info before removing from list
+    pid_t job_pid = job->pid;
+    char job_cmd[CMD_LENGTH_MAX];
+    strcpy(job_cmd, job->full_cmd);
+    CommandStatus original_status = job->cmd_status;
+
     // Print the command being brought to foreground
-    printf("%s : %d\n", job->full_cmd, job->pid);
+    printf("%s : %d\n", job_cmd, job_pid);
 
     // Send SIGCONT if the job is stopped
-    if (job->cmd_status == STOPPED) {
-        if (my_system_call(SYS_KILL, job->pid, SIGCONT) == -1) {
+    if (original_status == STOPPED) {
+        if (my_system_call(SYS_KILL, job_pid, SIGCONT) == -1) {
             perror("smash error: fg: kill failed");
             return 1;
         }
@@ -331,22 +375,27 @@ int exec_fg(JobsList* cmd_list, Command* cmd) {
 
     // Wait for the job to complete or stop
     int status;
-    pid_t ret = my_system_call(SYS_WAITPID, job->pid, &status, WUNTRACED);
+    pid_t ret = my_system_call(SYS_WAITPID, job_pid, &status, WUNTRACED);
     if (ret == -1) {
         perror("smash error: fg: waitpid failed");
-        free(job);
         return 1;
     }
 
-    // If job was stopped (Ctrl+Z), add it back to jobs list
+    // If job was stopped (Ctrl+Z), create new command and add it back to jobs list
     if (WIFSTOPPED(status)) {
-        job->cmd_status = STOPPED;
-        job->start_time = time(NULL);
-        AddCommand(cmd_list, job);
-    } else {
-        // Job completed or was terminated - free the memory
-        free(job->oldpwd);
-        free(job);
+        Command* stopped_job = (Command*)malloc(sizeof(Command));
+        if (stopped_job) {
+            strcpy(stopped_job->full_cmd, job_cmd);
+            strcpy(stopped_job->cmd, job_cmd);
+            stopped_job->pid = job_pid;
+            stopped_job->cmd_status = STOPPED;
+            stopped_job->start_time = time(NULL);
+            stopped_job->oldpwd = NULL;
+            stopped_job->id = INIT_ID;
+            stopped_job->num_of_args = 0;
+            stopped_job->args[0] = NULL;
+            AddCommand(cmd_list, stopped_job);
+        }
     }
 
     return 0;
@@ -449,28 +498,38 @@ void exec_bg(JobsList* cmd_list, Command* cmd) {
     }
 
     Command *job = NULL;
+
     if (cmd->num_of_args == 1) {
+        // User specified job ID
         if (cmd->args[0] == NULL) {
             fprintf(stderr, "smash error: bg: invalid arguments\n");
             return;
         }
         int job_id = atoi(cmd->args[0]);
+        if (job_id < 0) {
+            fprintf(stderr, "smash error: bg: invalid job-id\n");
+            return;
+        }
         job = findjobbyid(cmd_list, job_id);
         if (!job) {
             fprintf(stderr, "smash error: bg: job-id %d does not exist\n", job_id);
             return;
         }
     } else {
-        // Find the last stopped job (highest ID among stopped jobs)
+        // No job ID - find the last stopped job (highest ID among stopped jobs)
         Command* last_stopped = NULL;
+        int max_stopped_id = -1;
+
         for (int i = 0; i < JOBS_NUM_MAX; ++i) {
             if (cmd_list->jobs_list[i] &&
                 cmd_list->jobs_list[i]->cmd_status == STOPPED) {
-                if (!last_stopped || cmd_list->jobs_list[i]->id > last_stopped->id) {
+                if (cmd_list->jobs_list[i]->id > max_stopped_id) {
+                    max_stopped_id = cmd_list->jobs_list[i]->id;
                     last_stopped = cmd_list->jobs_list[i];
                 }
             }
         }
+
         job = last_stopped;
         if (!job) {
             fprintf(stderr, "smash error: bg: there is no stopped jobs to resume\n");
@@ -478,7 +537,7 @@ void exec_bg(JobsList* cmd_list, Command* cmd) {
         }
     }
 
-    // Check if job is stopped
+    // Check if job is actually stopped
     if (job->cmd_status != STOPPED) {
         fprintf(stderr, "smash error: bg: job-id %d is already running in the background\n", job->id);
         return;
